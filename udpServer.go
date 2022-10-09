@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"os"
 	"strconv"
@@ -25,10 +24,11 @@ type RouteEntry struct {
 }
 
 var routing_table = make(map[string]RouteEntry)
-var original_routingTable map[string]RouteEntry
+var original_routingTable = make(map[string]RouteEntry)
 var localAddr string
 
 func sendResponse(conn *net.UDPConn, addr *net.UDPAddr) {
+	m.Lock()
 	s := conv_string(routing_table)
 	n, err := conn.WriteToUDP([]byte(s), addr)
 	if err != nil {
@@ -36,6 +36,7 @@ func sendResponse(conn *net.UDPConn, addr *net.UDPAddr) {
 	}
 	fmt.Println("Sent", n, "bytes", conn.LocalAddr(), "->", addr)
 	fmt.Println()
+	m.Unlock()
 }
 
 func main() {
@@ -116,7 +117,11 @@ func actClient(addr string) {
 func printRouting_table(routing_table map[string]RouteEntry) {
 	m.Lock()
 	for _, element := range routing_table {
-		fmt.Println("Dest:" + element.Dest + " | Next:" + element.Next + " | Cost:" + strconv.Itoa(element.Cost))
+		str := "Dest:" + element.Dest + " | Next:" + element.Next + " | Cost:" + strconv.Itoa(element.Cost)
+		if element.Cost == INF {
+			str += " (Unreachable)"
+		}
+		fmt.Println(str)
 	}
 	fmt.Println()
 	m.Unlock()
@@ -157,13 +162,14 @@ func conv_route(s string) map[string]RouteEntry {
 }
 
 func recieveFromServer(conn net.Conn) {
+	//m.Lock()
 	p := make([]byte, 2048)
 	var err error
 	fmt.Fprintf(conn, "")
+	remoteAddr := conn.RemoteAddr().String()
 	_, err = bufio.NewReader(conn).Read(p)
 	if err == nil {
 		str := string(p[:])
-		remoteAddr := conn.RemoteAddr().String()
 		fmt.Println("Recieving routing table from " + remoteAddr[:len(remoteAddr)-5])
 		recieved_table := conv_route(str)
 		printRouting_table(recieved_table)
@@ -172,21 +178,40 @@ func recieveFromServer(conn net.Conn) {
 		printRouting_table(routing_table)
 
 	} else {
-		fmt.Printf("here is Some error %v\n", err)
+		//fmt.Printf("here is Some error %v\n", err)
+		fmt.Printf("%v is Unreachable\n", remoteAddr[:len(remoteAddr)-5])
+		poisonReverse(remoteAddr[:len(remoteAddr)-5])
+		fmt.Println("Routing Table:")
+		printRouting_table(routing_table)
 	}
+	//m.Unlock()
 }
 
 func updateRoutingTable(m map[string]RouteEntry, next string) {
 	for key, element := range m {
 		if _, ok := routing_table[key]; ok {
-			cost := int(math.Min(float64(routing_table[key].Cost), float64(element.Cost+routing_table[next].Cost)))
-			routing_table[key] = RouteEntry{key, key, cost}
+			if routing_table[key].Cost > element.Cost+routing_table[next].Cost {
+				routing_table[key] = RouteEntry{key, next, element.Cost + routing_table[next].Cost}
+			}
 		} else {
 			routing_table[key] = RouteEntry{key, next, element.Cost + routing_table[next].Cost}
 		}
 	}
 }
 
-// func poisonReverse(addr string){
-// 	orig_cost :=
-// }
+func poisonReverse(addr string) {
+	for key, element := range routing_table {
+		if key == addr && element.Next == addr {
+			routing_table[key] = RouteEntry{key, key, INF}
+			original_routingTable[key] = RouteEntry{key, key, INF}
+		}
+		if element.Next == addr {
+			if val, ok := original_routingTable[key]; ok {
+				routing_table[key] = RouteEntry{key, key, val.Cost}
+			} else {
+				routing_table[key] = RouteEntry{key, element.Next, INF}
+			}
+
+		}
+	}
+}
