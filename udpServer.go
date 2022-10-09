@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
 	"strconv"
@@ -13,6 +14,9 @@ import (
 )
 
 var wg sync.WaitGroup
+var m = sync.RWMutex{}
+
+const INF = 999999999
 
 type RouteEntry struct {
 	Dest string
@@ -21,6 +25,7 @@ type RouteEntry struct {
 }
 
 var routing_table = make(map[string]RouteEntry)
+var original_routingTable map[string]RouteEntry
 var localAddr string
 
 func sendResponse(conn *net.UDPConn, addr *net.UDPAddr) {
@@ -30,6 +35,7 @@ func sendResponse(conn *net.UDPConn, addr *net.UDPAddr) {
 		fmt.Printf("Couldn't send response %v", err)
 	}
 	fmt.Println("Sent", n, "bytes", conn.LocalAddr(), "->", addr)
+	fmt.Println()
 }
 
 func main() {
@@ -49,12 +55,20 @@ func main() {
 				strings.TrimSpace(args[i+1]), cost}
 		}
 	}
+	for k, v := range routing_table {
+		original_routingTable[k] = v
+	}
+	fmt.Println("Routing Table:")
+	printRouting_table(routing_table)
 	createServer(localAddr)
 	time.Sleep(10 * time.Second)
-	for key, _ := range routing_table {
-		if key != localAddr {
-			go actClient(key)
+	for {
+		for key, _ := range routing_table {
+			if key != localAddr {
+				go actClient(key)
+			}
 		}
+		time.Sleep(2 * time.Second)
 	}
 	wg.Wait()
 }
@@ -90,28 +104,22 @@ func readUDP(ser *net.UDPConn, p []byte) {
 }
 
 func actClient(addr string) {
-	p := make([]byte, 2048)
 	conn, err := net.Dial("udp", addr+":4321")
 	if err != nil {
 		fmt.Printf("Some error %v", err)
 		return
 	}
-	fmt.Fprintf(conn, "")
-	_, err = bufio.NewReader(conn).Read(p)
-	if err == nil {
-		str := string(p[:])
-		fmt.Println("Recieving routing table from " + conn.RemoteAddr().String())
-		printRouting_table(conv_route(str))
-	} else {
-		fmt.Printf("Some error %v\n", err)
-	}
+	recieveFromServer(conn)
 	conn.Close()
 }
 
 func printRouting_table(routing_table map[string]RouteEntry) {
+	m.Lock()
 	for _, element := range routing_table {
 		fmt.Println("Dest:" + element.Dest + " | Next:" + element.Next + " | Cost:" + strconv.Itoa(element.Cost))
 	}
+	fmt.Println()
+	m.Unlock()
 }
 
 func conv_string(m map[string]RouteEntry) string {
@@ -147,3 +155,38 @@ func conv_route(s string) map[string]RouteEntry {
 	}
 	return r
 }
+
+func recieveFromServer(conn net.Conn) {
+	p := make([]byte, 2048)
+	var err error
+	fmt.Fprintf(conn, "")
+	_, err = bufio.NewReader(conn).Read(p)
+	if err == nil {
+		str := string(p[:])
+		remoteAddr := conn.RemoteAddr().String()
+		fmt.Println("Recieving routing table from " + remoteAddr[:len(remoteAddr)-5])
+		recieved_table := conv_route(str)
+		printRouting_table(recieved_table)
+		updateRoutingTable(recieved_table, remoteAddr[:len(remoteAddr)-5])
+		fmt.Println("Routing Table:")
+		printRouting_table(routing_table)
+
+	} else {
+		fmt.Printf("here is Some error %v\n", err)
+	}
+}
+
+func updateRoutingTable(m map[string]RouteEntry, next string) {
+	for key, element := range m {
+		if _, ok := routing_table[key]; ok {
+			cost := int(math.Min(float64(routing_table[key].Cost), float64(element.Cost+routing_table[next].Cost)))
+			routing_table[key] = RouteEntry{key, key, cost}
+		} else {
+			routing_table[key] = RouteEntry{key, next, element.Cost + routing_table[next].Cost}
+		}
+	}
+}
+
+// func poisonReverse(addr string){
+// 	orig_cost :=
+// }
