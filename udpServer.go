@@ -14,6 +14,7 @@ import (
 
 var wg sync.WaitGroup
 var m = sync.RWMutex{}
+var down_routers []string
 
 const INF = 999999999
 
@@ -101,6 +102,7 @@ func readUDP(ser *net.UDPConn, p []byte) {
 			continue
 		}
 		go sendResponse(ser, remoteaddr)
+		time.Sleep(1 * time.Second)
 	}
 }
 
@@ -173,45 +175,67 @@ func recieveFromServer(conn net.Conn) {
 		fmt.Println("Recieving routing table from " + remoteAddr[:len(remoteAddr)-5])
 		recieved_table := conv_route(str)
 		printRouting_table(recieved_table)
-		updateRoutingTable(recieved_table, remoteAddr[:len(remoteAddr)-5])
+		updateRoutingTable(recieved_table, remoteAddr[:len(remoteAddr)-5], down_routers)
 		fmt.Println("Routing Table:")
 		printRouting_table(routing_table)
 
 	} else {
+		if !contains(down_routers, remoteAddr[:len(remoteAddr)-5]) {
+			down_routers = append(down_routers, remoteAddr[:len(remoteAddr)-5])
+		}
 		//fmt.Printf("here is Some error %v\n", err)
 		fmt.Printf("%v is Unreachable\n", remoteAddr[:len(remoteAddr)-5])
 		poisonReverse(remoteAddr[:len(remoteAddr)-5])
 		fmt.Println("Routing Table:")
 		printRouting_table(routing_table)
+		time.Sleep(2 * time.Second)
 	}
 	//m.Unlock()
 }
 
-func updateRoutingTable(m map[string]RouteEntry, next string) {
+func updateRoutingTable(m map[string]RouteEntry, next string, down_routers []string) {
 	for key, element := range m {
-		if _, ok := routing_table[key]; ok {
-			if routing_table[key].Cost > element.Cost+routing_table[next].Cost {
+		if key == element.Next && element.Cost == INF {
+			down_routers = append(down_routers, key)
+			routing_table[key] = RouteEntry{key, key, INF}
+		}
+		if !contains(down_routers, key) {
+			if _, ok := routing_table[key]; ok {
+				if routing_table[key].Cost > element.Cost+routing_table[next].Cost {
+					routing_table[key] = RouteEntry{key, next, element.Cost + routing_table[next].Cost}
+				}
+			} else {
 				routing_table[key] = RouteEntry{key, next, element.Cost + routing_table[next].Cost}
 			}
-		} else {
-			routing_table[key] = RouteEntry{key, next, element.Cost + routing_table[next].Cost}
 		}
+
 	}
 }
 
 func poisonReverse(addr string) {
+	for k, v := range original_routingTable {
+		routing_table[k] = v
+	}
 	for key, element := range routing_table {
 		if key == addr && element.Next == addr {
 			routing_table[key] = RouteEntry{key, key, INF}
 			original_routingTable[key] = RouteEntry{key, key, INF}
-		}
-		if element.Next == addr {
-			if val, ok := original_routingTable[key]; ok {
-				routing_table[key] = RouteEntry{key, key, val.Cost}
-			} else {
-				routing_table[key] = RouteEntry{key, element.Next, INF}
-			}
+		} else if element.Next == addr {
+			// if val, ok := original_routingTable[key]; ok {
+			// 	routing_table[key] = RouteEntry{key, key, val.Cost}
+			// } else {
+			routing_table[key] = RouteEntry{key, element.Next, INF}
+			// }
 
 		}
 	}
+}
+
+func contains(s []string, e string) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
 }
