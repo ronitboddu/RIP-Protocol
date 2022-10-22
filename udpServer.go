@@ -17,6 +17,7 @@ var m = sync.RWMutex{}
 var down_routers []string
 
 const INF = 999999999
+const SUBNET = "255.255.255.0"
 
 type RouteEntry struct {
 	Dest string
@@ -119,8 +120,9 @@ func actClient(addr string) {
 func printRouting_table(routing_table map[string]RouteEntry) {
 	m.Lock()
 	for _, element := range routing_table {
-		str := "Dest:" + element.Dest + " | Next:" + element.Next + " | Cost:" + strconv.Itoa(element.Cost)
+		str := "Dest:" + element.Dest + " | Next:" + element.Next + " | Subnet:" + SUBNET + " | Cost:" + strconv.Itoa(element.Cost)
 		if element.Cost == INF {
+			str = "Dest:" + element.Dest + " | Next:" + element.Next + " | Subnet:" + SUBNET + " | Cost:-"
 			str += " (Unreachable)"
 		}
 		fmt.Println(str)
